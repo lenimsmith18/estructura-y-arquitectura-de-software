@@ -1,0 +1,19 @@
+{
+  "name": "reportes-service",
+  "version": "1.0.0",
+  "description": "Microservicio de consultas y reportes de asistencia (suscriptor de eventos) (arquitectura hexagonal).",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "amqplib": "^0.10.4",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

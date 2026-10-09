@@ -1,0 +1,140 @@
+# =============================================================================
+# Sistema de Control de Asistencia — orquestación de MICROSERVICIOS
+#
+#   gateway (Nginx :8090) ─┬─> empleados-service      :3001  (empleados_db)
+#                          ├─> asistencia-service     :3002  (asistencia_db) ──HTTP──> empleados-service
+#                          ├─> reportes-service       :3003  (reportes_db)
+#                          └─> notificaciones-service :3004
+#
+#   Publicador–Suscriptor: RabbitMQ, exchange "control_asistencia.eventos" (topic)
+#     empleados-service  ──publica──> empleado.*    ──> reportes, notificaciones
+#     asistencia-service ──publica──> asistencia.*  ──> reportes, notificaciones
+#
+# Uso:  docker compose up --build      →  abrir http://localhost:8090
+# =============================================================================
+
+x-entorno-comun: &entorno-comun
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  EXCHANGE: control_asistencia.eventos
+  TZ: America/Bogota
+
+services:
+  # --------------------------- Infraestructura -------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      TZ: America/Bogota
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "15672:15672" # Consola web de RabbitMQ (guest / guest) para ver colas y mensajes
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # ------------------------------ Microservicios -----------------------------
+  # Los SUSCRIPTORES arrancan primero, para que sus colas existan antes de que
+  # los publicadores emitan los eventos de los datos de ejemplo.
+  reportes-service:
+    build: ./services/reportes-service
+    environment:
+      <<: *entorno-comun
+      PORT: 3003
+      REPOSITORIO: postgres
+      BROKER: rabbitmq
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/reportes_db
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  notificaciones-service:
+    build: ./services/notificaciones-service
+    environment:
+      <<: *entorno-comun
+      PORT: 3004
+      BROKER: rabbitmq
+    ports:
+      - "3004:3004"
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3004/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  empleados-service:
+    build: ./services/empleados-service
+    environment:
+      <<: *entorno-comun
+      PORT: 3001
+      REPOSITORIO: postgres
+      BROKER: rabbitmq
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empleados_db
+      DATOS_DEMO: "true"
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      reportes-service: { condition: service_healthy }
+      notificaciones-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  asistencia-service:
+    build: ./services/asistencia-service
+    environment:
+      <<: *entorno-comun
+      PORT: 3002
+      REPOSITORIO: postgres
+      BROKER: rabbitmq
+      VERIFICADOR: http
+      EMPLEADOS_URL: http://empleados-service:3001
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/asistencia_db
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      empleados-service: { condition: service_healthy }
+
+  # ------------------------- API Gateway + interfaz web ----------------------
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./gateway/public:/usr/share/nginx/html:ro
+    ports:
+      - "${GATEWAY_PORT:-8090}:80" # Cambiar con GATEWAY_PORT si el puerto está ocupado
+    depends_on:
+      - empleados-service
+      - asistencia-service
+      - reportes-service
+      - notificaciones-service
+
+volumes:
+  postgres_data:

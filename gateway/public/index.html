@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de Asistencia</title>
+  <!--
+    Interfaz web del sistema. Solo habla con el API Gateway (/api/...);
+    no sabe cuántos microservicios hay detrás ni dónde están.
+  -->
+  <style>
+    :root { --primario: #1f5f99; --fondo: #f3f5f8; --borde: #d6dbe1; --ok: #1e7b47; --error: #b3261e; --aviso: #8a5a00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fondo); color: #1d232b; }
+    header { background: var(--primario); color: #fff; padding: 14px 20px; }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 4px 0 0; opacity: .85; font-size: .85rem; }
+    nav { display: flex; gap: 4px; padding: 0 20px; background: #174a78; }
+    nav button { background: none; border: 0; color: #cfe0f0; padding: 10px 16px; cursor: pointer; font-size: .95rem; border-bottom: 3px solid transparent; }
+    nav button.activa { color: #fff; border-bottom-color: #fff; }
+    main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .panel { display: none; } .panel.activa { display: block; }
+    .tarjeta { background: #fff; border: 1px solid var(--borde); border-radius: 8px; padding: 16px 18px; margin-bottom: 16px; }
+    .tarjeta h2 { margin: 0 0 12px; font-size: 1.05rem; }
+    .fila { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    label { display: flex; flex-direction: column; font-size: .8rem; gap: 4px; color: #4a5562; }
+    input, select { padding: 8px 10px; border: 1px solid var(--borde); border-radius: 6px; font-size: .95rem; min-width: 140px; }
+    button.btn { padding: 9px 16px; border: 0; border-radius: 6px; background: var(--primario); color: #fff; cursor: pointer; font-size: .9rem; }
+    button.btn.sec { background: #e6ebf1; color: #1d232b; }
+    button.btn.verde { background: var(--ok); } button.btn.rojo { background: var(--error); }
+    button.btn.peq { padding: 5px 10px; font-size: .8rem; }
+    .mensaje { margin-top: 12px; padding: 10px 12px; border-radius: 6px; display: none; }
+    .mensaje.ok { display: block; background: #e5f4ea; color: var(--ok); }
+    .mensaje.error { display: block; background: #fbe9e7; color: var(--error); }
+    .mensaje.aviso { display: block; background: #fff4dc; color: var(--aviso); }
+    .tabla-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 10px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+    th { background: #f7f9fb; font-weight: 600; }
+    .chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .75rem; font-weight: 600; }
+    .chip.si { background: #e5f4ea; color: var(--ok); } .chip.no { background: #fbe9e7; color: var(--error); }
+    .chip.ENTRADA { background: #e3eefa; color: var(--primario); } .chip.SALIDA { background: #f1e8fb; color: #6a3aa0; }
+    .kiosco { max-width: 460px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+    ul.notifs { list-style: none; padding: 0; margin: 0; font-size: .87rem; }
+    ul.notifs li { padding: 8px 0; border-bottom: 1px solid var(--borde); }
+    ul.notifs small { color: #6b7684; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Control de Entrada y Salida de Empleados</h1>
+    <p>Microservicios · Arquitectura Hexagonal · Publicador–Suscriptor · Inyección de Dependencias</p>
+  </header>
+  <nav>
+    <button class="activa" data-panel="empleado">Empleado</button>
+    <button data-panel="admin">Administrador</button>
+  </nav>
+
+  <main>
+    <!-- ======================= PANEL EMPLEADO ======================= -->
+    <section id="empleado" class="panel activa">
+      <div class="tarjeta kiosco">
+        <h2>Registrar asistencia</h2>
+        <div class="fila">
+          <label>Código de empleado <input id="m-codigo" placeholder="E001" autocomplete="off"></label>
+          <label>PIN <input id="m-pin" type="password" placeholder="••••" inputmode="numeric"></label>
+        </div>
+        <div class="fila" style="margin-top:12px">
+          <button class="btn verde" id="btn-entrada">Registrar entrada</button>
+          <button class="btn rojo" id="btn-salida">Registrar salida</button>
+          <button class="btn sec" id="btn-mias">Mis marcaciones</button>
+        </div>
+        <div id="m-mensaje" class="mensaje"></div>
+        <div id="m-mias" class="tabla-scroll"></div>
+      </div>
+      <p style="font-size:.85rem;color:#6b7684">Datos de prueba: <b>E001</b> y <b>E002</b> (PIN 1234) activos · <b>E003</b> (PIN 1234) inactivo.</p>
+    </section>
+
+    <!-- ===================== PANEL ADMINISTRADOR ===================== -->
+    <section id="admin" class="panel">
+      <div class="grid2">
+        <div class="tarjeta">
+          <h2>Registrar empleado</h2>
+          <div class="fila">
+            <label>Código <input id="e-codigo" placeholder="E004"></label>
+            <label>Nombre <input id="e-nombre" placeholder="Nombre completo"></label>
+            <label>Cargo <input id="e-cargo" placeholder="Cargo"></label>
+            <label>PIN <input id="e-pin" placeholder="4-6 dígitos"></label>
+            <button class="btn" id="btn-crear">Registrar</button>
+          </div>
+          <div id="e-mensaje" class="mensaje"></div>
+        </div>
+        <div class="tarjeta">
+          <h2>Notificaciones enviadas <button class="btn sec peq" id="btn-notifs">Actualizar</button></h2>
+          <ul id="notifs" class="notifs"></ul>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Empleados <button class="btn sec peq" id="btn-empleados">Actualizar</button></h2>
+        <div id="empleados" class="tabla-scroll"></div>
+      </div>
+
+      <div class="tarjeta">
+        <h2>Consultar movimientos por período</h2>
+        <div class="fila">
+          <label>Desde <input type="date" id="r-desde"></label>
+          <label>Hasta <input type="date" id="r-hasta"></label>
+          <label>Empleado (opcional) <input id="r-empleado" placeholder="E001"></label>
+          <button class="btn" id="btn-movimientos">Consultar movimientos</button>
+          <button class="btn sec" id="btn-reporte">Reporte de horas</button>
+        </div>
+        <div id="r-mensaje" class="mensaje"></div>
+        <div id="r-resultado" class="tabla-scroll"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const fecha = (iso) => iso ? new Date(iso).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+    const hoy = () => new Date().toLocaleDateString('en-CA');
+
+    /** Llama al API Gateway y lanza un Error con el mensaje del servicio si falla. */
+    async function api(ruta, opciones = {}) {
+      let res;
+      try {
+        res = await fetch('/api' + ruta, {
+          ...opciones,
+          headers: { 'Content-Type': 'application/json' },
+          body: opciones.body ? JSON.stringify(opciones.body) : undefined,
+        });
+      } catch {
+        throw Object.assign(new Error('No fue posible comunicarse con el servidor.'), { codigo: 'SERVICIO_NO_DISPONIBLE' });
+      }
+      const datos = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(datos.mensaje || `Error ${res.status}`), { codigo: datos.error });
+      return datos;
+    }
+
+    function mostrar(el, tipo, texto) { el.className = 'mensaje ' + tipo; el.textContent = texto; }
+
+    // ----------------------------- Pestañas -----------------------------
+    document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
+      document.querySelectorAll('nav button, .panel').forEach((x) => x.classList.remove('activa'));
+      b.classList.add('activa');
+      $(b.dataset.panel).classList.add('activa');
+      if (b.dataset.panel === 'admin') { cargarEmpleados(); cargarNotificaciones(); }
+    }));
+
+    // --------------------------- Panel empleado --------------------------
+    const credenciales = () => ({ codigo: $('m-codigo').value.trim(), pin: $('m-pin').value.trim() });
+
+    async function marcar(tipo) {
+      $('m-mias').innerHTML = '';
+      try {
+        const r = await api('/marcaciones/' + tipo, { method: 'POST', body: credenciales() });
+        mostrar($('m-mensaje'), 'ok', `${r.mensaje} (${fecha(r.marcacion.fechaHora)})`);
+        $('m-pin').value = '';
+      } catch (e) {
+        const avisos = ['ENTRADA_DUPLICADA', 'SALIDA_SIN_ENTRADA'];
+        mostrar($('m-mensaje'), avisos.includes(e.codigo) ? 'aviso' : 'error', e.message);
+      }
+    }
+    $('btn-entrada').onclick = () => marcar('entrada');
+    $('btn-salida').onclick = () => marcar('salida');
+    $('btn-mias').onclick = async () => {
+      try {
+        const r = await api('/marcaciones/mias', { method: 'POST', body: credenciales() });
+        mostrar($('m-mensaje'), 'ok', `Últimas marcaciones de ${r.empleado.nombre}`);
+        $('m-mias').innerHTML = tabla(['Tipo', 'Fecha y hora', 'Jornada'], r.marcaciones.map((m) => [
+          `<span class="chip ${m.tipo}">${m.tipo}</span>`, esc(fecha(m.fechaHora)),
+          m.duracionMinutos != null ? `${Math.floor(m.duracionMinutos / 60)} h ${m.duracionMinutos % 60} min` : '',
+        ]));
+      } catch (e) { mostrar($('m-mensaje'), 'error', e.message); }
+    };
+
+    // ------------------------- Panel administrador -----------------------
+    function tabla(encabezados, filas) {
+      if (!filas.length) return '<p style="color:#6b7684">Sin resultados.</p>';
+      return `<table><thead><tr>${encabezados.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${filas.map((f) => `<tr>${f.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    }
+
+    async function cargarEmpleados() {
+      try {
+        const lista = await api('/empleados');
+        $('empleados').innerHTML = tabla(['Código', 'Nombre', 'Cargo', 'Estado', 'Acción'], lista.map((e) => [
+          esc(e.codigo), esc(e.nombre), esc(e.cargo),
+          `<span class="chip ${e.activo ? 'si' : 'no'}">${e.activo ? 'Activo' : 'Inactivo'}</span>`,
+          `<button class="btn sec peq" data-id="${esc(e.id)}" data-activo="${e.activo}">${e.activo ? 'Desactivar' : 'Activar'}</button>`,
+        ]));
+        $('empleados').querySelectorAll('button[data-id]').forEach((b) => b.onclick = async () => {
+          await api('/empleados/' + b.dataset.id, { method: 'PATCH', body: { activo: b.dataset.activo !== 'true' } })
+            .catch((e) => alert(e.message));
+          cargarEmpleados();
+          setTimeout(cargarNotificaciones, 500);
+        });
+      } catch (e) { $('empleados').innerHTML = `<div class="mensaje error">${esc(e.message)}</div>`; }
+    }
+
+    async function cargarNotificaciones() {
+      try {
+        const lista = await api('/notificaciones?limite=8');
+        $('notifs').innerHTML = lista.length
+          ? lista.map((n) => `<li><b>${esc(n.asunto)}</b> → ${esc(n.destinatario)}<br>${esc(n.mensaje)}<br><small>${esc(fecha(n.creadaEn))} · evento ${esc(n.eventoTipo)}</small></li>`).join('')
+          : '<li style="color:#6b7684">Aún no hay notificaciones.</li>';
+      } catch (e) { $('notifs').innerHTML = `<li class="mensaje error">${esc(e.message)}</li>`; }
+    }
+
+    $('btn-empleados').onclick = cargarEmpleados;
+    $('btn-notifs').onclick = cargarNotificaciones;
+
+    $('btn-crear').onclick = async () => {
+      try {
+        const e = await api('/empleados', { method: 'POST', body: {
+          codigo: $('e-codigo').value.trim(), nombre: $('e-nombre').value.trim(),
+          cargo: $('e-cargo').value.trim(), pin: $('e-pin').value.trim(),
+        } });
+        mostrar($('e-mensaje'), 'ok', `Empleado ${e.codigo} registrado.`);
+        ['e-codigo', 'e-nombre', 'e-cargo', 'e-pin'].forEach((id) => $(id).value = '');
+        cargarEmpleados();
+        setTimeout(cargarNotificaciones, 500);
+      } catch (err) { mostrar($('e-mensaje'), 'error', err.message); }
+    };
+
+    const filtro = () => new URLSearchParams(Object.entries({
+      desde: $('r-desde').value, hasta: $('r-hasta').value, empleado: $('r-empleado').value.trim(),
+    }).filter(([, v]) => v));
+
+    $('btn-movimientos').onclick = async () => {
+      try {
+        const r = await api('/reportes/movimientos?' + filtro());
+        mostrar($('r-mensaje'), 'ok', `${r.total} movimiento(s) entre ${r.periodo.desde} y ${r.periodo.hasta} · empleado: ${r.empleado}`);
+        $('r-resultado').innerHTML = tabla(['Código', 'Empleado', 'Tipo', 'Fecha y hora', 'Jornada'], r.movimientos.map((m) => [
+          esc(m.empleadoCodigo), esc(m.empleadoNombre), `<span class="chip ${m.tipo}">${m.tipo}</span>`, esc(fecha(m.fechaHora)),
+          m.duracionMinutos != null ? `${Math.floor(m.duracionMinutos / 60)} h ${m.duracionMinutos % 60} min` : '',
+        ]));
+      } catch (e) { mostrar($('r-mensaje'), 'error', e.message); $('r-resultado').innerHTML = ''; }
+    };
+
+    $('btn-reporte').onclick = async () => {
+      try {
+        const r = await api('/reportes/horas?' + filtro());
+        mostrar($('r-mensaje'), 'ok', `Reporte de horas del ${r.periodo.desde} al ${r.periodo.hasta} · total: ${r.totalHoras}`);
+        $('r-resultado').innerHTML = tabla(['Código', 'Nombre', 'Cargo', 'Jornadas completas', 'Horas trabajadas', '¿Entrada abierta?', 'Última marcación'],
+          r.empleados.map((e) => [esc(e.codigo), esc(e.nombre), esc(e.cargo), e.jornadasCompletas, esc(e.horasTrabajadas),
+            e.entradaAbierta ? '<span class="chip ENTRADA">Sí</span>' : 'No', esc(fecha(e.ultimaMarcacion))]));
+      } catch (e) { mostrar($('r-mensaje'), 'error', e.message); $('r-resultado').innerHTML = ''; }
+    };
+
+    $('r-desde').value = hoy().slice(0, 8) + '01';
+    $('r-hasta').value = hoy();
+  </script>
+</body>
+</html>

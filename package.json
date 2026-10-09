@@ -1,11 +1,15 @@
 {
-  "name": "estructura",
+  "name": "control-asistencia-microservicios",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Control de entrada y salida de empleados: Microservicios, Arquitectura Hexagonal, Publicador-Suscriptor e Inyección de Dependencias.",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "docker compose up --build",
+    "stop": "docker compose down",
+    "reset": "docker compose down -v",
+    "test": "npm test --prefix services/empleados-service && npm test --prefix services/asistencia-service && npm test --prefix services/reportes-service && npm test --prefix services/notificaciones-service",
+    "install:all": "cd services/empleados-service && npm install && cd ../.. && cd services/asistencia-service && npm install && cd ../.. && cd services/reportes-service && npm install && cd ../.. && cd services/notificaciones-service && npm install && cd ../.."
   },
-  "author": "",
+  "author": "lenimMurillo",
   "license": "ISC"
 }
